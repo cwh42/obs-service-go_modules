@@ -193,8 +193,45 @@ def extract(filename, outdir):
 
     os.chdir(cwd)
 
+def pack(files: list, workdir: os.PathLike, mtime: float, args: dict):
+    archive_args = get_archive_parameters(args)
+    outdir = args.outdir
+    vendor_tarname = f"{archive_args['vendorname']}.{archive_args['ext']}"
+    vendor_tarfile = os.path.join(outdir, vendor_tarname)
 
-def cmd_go_mod(subcmd, moddir):
+    cwd = os.getcwd()
+    os.chdir(workdir)
+
+    log.info(f"Vendor go.mod dependencies to {vendor_tarname}")
+    log.debug(f"Set archive files times to {mtime}")
+
+    options = []
+    if archive_args["compression"] == "gzip":
+        options.append("!timestamp")
+    if archive_args["level"]:
+        options.append(f"compression-level={archive_args['level']}")
+    with libarchive.file_writer(
+        vendor_tarfile,
+        archive_args["format"],
+        archive_args["compression"],
+        options=",".join(options),
+    ) as new_archive:
+        try:
+            for file in files:
+                new_archive.add_files(
+                    file, mtime=mtime, ctime=mtime, atime=mtime
+                )
+        except (
+            TypeError
+        ):  # If using old libarchive fallback to old non reproducible behavior
+            log.warning(
+                "python libarchive is too old, unable to produce reproducible output"
+            )
+            for file in files:
+                new_archive.add_files(files)
+    os.chdir(cwd)
+
+def cmd_go_mod(subcmd, moddir, goenv = None):
     """Execute go mod subcommand using subprocess.run().
     Capture both stderr and stdout as text.
     Log as info or error in this function body.
@@ -205,9 +242,9 @@ def cmd_go_mod(subcmd, moddir):
     log.info(" ".join(cmd))
     # subprocess.run() returns CompletedProcess cp
     if sys.version_info >= (3, 7):
-        cp = run(cmd, cwd=moddir, capture_output=True, text=True)
+        cp = run(cmd, cwd=moddir, env=goenv, capture_output=True, text=True)
     else:
-        cp = run(cmd, cwd=moddir)
+        cp = run(cmd, cwd=moddir, env=goenv)
     if cp.returncode:
         log.error(cp.stderr.strip())
     return cp
@@ -284,14 +321,11 @@ def main():
     )
     args = parser.parse_args()
 
-    outdir = args.outdir
     subdir = args.subdir
 
     replace = args.replace
     require = args.require
 
-    archive_args = get_archive_parameters(args)
-    vendor_tarname = f"{archive_args['vendorname']}.{archive_args['ext']}"
     if args.archive:
         archive_matches = sorted(Path.cwd().glob(args.archive), reverse=True)
         if not archive_matches:
@@ -327,6 +361,7 @@ def main():
             )
         if go_mod_path and os.path.exists(go_mod_path):
             go_mod_dir = os.path.dirname(go_mod_path)
+            go_mod_mtime = os.path.getmtime(go_mod_path)
             log.info(f"Using go.mod found at {go_mod_path}")
         else:
             log.error(f"File go.mod not found under {os.path.join(tempdir, basename)}")
@@ -352,6 +387,8 @@ def main():
             # - go mod verify
             #   (validates checksums)
 
+            log.info(f"Using strategy `{args.strategy}`")
+
             # return value cp is type subprocess.CompletedProcess
             cp = cmd_go_mod(["download"], go_mod_dir)
             if cp.returncode:
@@ -376,48 +413,50 @@ def main():
                 log.error("go mod verify failed")
                 exit(1)
 
-            log.info(f"Vendor go.mod dependencies to {vendor_tarname}")
-            vendor_tarfile = os.path.join(outdir, vendor_tarname)
-            cwd = os.getcwd()
-            os.chdir(go_mod_dir)
-            vendor_dir = "vendor"
+            files = ["vendor"]
+            if modified:
+                files.extend(["go.mod", "go.sum"])
 
-            mtime = os.path.getmtime(go_mod_path)
-            log.debug(f"Set archive files times to {mtime}")
+            pack(files = files, workdir = go_mod_dir, mtime = go_mod_mtime, args = args)
 
-            options = []
-            if archive_args["compression"] == "gzip":
-                options.append("!timestamp")
-            if archive_args["level"]:
-                options.append(f"compression-level={archive_args['level']}")
-            with libarchive.file_writer(
-                vendor_tarfile,
-                archive_args["format"],
-                archive_args["compression"],
-                options=",".join(options),
-            ) as new_archive:
-                try:
-                    new_archive.add_files(
-                        vendor_dir, mtime=mtime, ctime=mtime, atime=mtime
-                    )
-                    if modified:
-                        new_archive.add_files(
-                            "go.mod", mtime=mtime, ctime=mtime, atime=mtime
-                        )
-                        new_archive.add_files(
-                            "go.sum", mtime=mtime, ctime=mtime, atime=mtime
-                        )
-                except (
-                    TypeError
-                ):  # If using old libarchive fallback to old non reproducible behavior
+        elif args.strategy == "download":
+            # Tars the GOMODCACHE dir only. Does not run 'go mod vendor'
+            # Use it by untaring to the COMODCACHE dir and run 'go mod vendor' during build (in the spec).
+
+            log.info(f"Using strategy `{args.strategy}`")
+
+            gomodcache_dir = os.path.join("go", "pkg", "mod")
+            gomodcache_path = os.path.join(tempdir, gomodcache_dir)
+            goenv = { "GOMODCACHE": gomodcache_path }
+
+            # return value cp is type subprocess.CompletedProcess
+            cp = cmd_go_mod(["download"], go_mod_dir, goenv)
+            if cp.returncode:
+                if "invalid version" in cp.stderr:
                     log.warning(
-                        "python libarchive is too old, unable to produce reproducible output"
+                        "go mod download is more sensitive to invalid module versions than go mod vendor"
                     )
-                    new_archive.add_files(vendor_dir)
-            os.chdir(cwd)
+                    log.warning(
+                        "if go mod vendor and go mod verify complete, vendoring is successful"
+                    )
+                else:
+                    log.error("go mod download failed")
+                    exit(1)
 
+            cp = cmd_go_mod(["verify"], go_mod_dir, goenv)
+            if cp.returncode:
+                log.error("go mod verify failed")
+                exit(1)
+
+            cache_dir = os.path.join(gomodcache_dir, "cache")
+            pack(files = [cache_dir], workdir = tempdir, mtime = go_mod_mtime, args = args)
+
+        else:
+            log.info(f"Unknown strategy `{args.strategy}`")
+            exit(1)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     log = logging.getLogger(app_name)
     main()
+
