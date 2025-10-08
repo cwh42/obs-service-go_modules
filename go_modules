@@ -45,6 +45,7 @@ description = __doc__
 
 DEFAULT_COMPRESSION = "gz"
 DEFAULT_VENDOR_STEM = "vendor"
+DEFAULT_MODCACHE_STEM = "gomodcache"
 
 
 def get_archive_parameters(args):
@@ -321,6 +322,7 @@ def main():
     )
     args = parser.parse_args()
 
+    outdir = args.outdir
     subdir = args.subdir
 
     replace = args.replace
@@ -417,7 +419,12 @@ def main():
             if modified:
                 files.extend(["go.mod", "go.sum"])
 
-            pack(files = files, workdir = go_mod_dir, mtime = go_mod_mtime, args = args)
+            pack(
+                files = files,
+                workdir = go_mod_dir,
+                mtime = go_mod_mtime,
+                args = args
+            )
 
         elif args.strategy == "download":
             # Tars the GOMODCACHE dir only. Does not run 'go mod vendor'
@@ -425,7 +432,7 @@ def main():
 
             log.info(f"Using strategy `{args.strategy}`")
 
-            gomodcache_dir = os.path.join("go", "pkg", "mod")
+            gomodcache_dir = DEFAULT_MODCACHE_STEM
             gomodcache_path = os.path.join(tempdir, gomodcache_dir)
             goenv = { "GOMODCACHE": gomodcache_path }
 
@@ -449,10 +456,20 @@ def main():
                 exit(1)
 
             cache_dir = os.path.join(gomodcache_dir, "cache")
-            pack(files = [cache_dir], workdir = tempdir, mtime = go_mod_mtime, args = args)
+            pack(
+                files = [cache_dir],
+                workdir = tempdir,
+                mtime = go_mod_mtime,
+                args = args
+            )
+
+            if modified:
+                log.info("Copy modified go.mod & go.sum to source dir")
+                shutil.copy(src=go_mod_path, dst=outdir)
+                shutil.copy(src=os.path.join(go_mod_dir, "go.sum"), dst=outdir)
 
         else:
-            log.info(f"Unknown strategy `{args.strategy}`")
+            log.error(f"Unknown strategy `{args.strategy}`")
             exit(1)
 
 if __name__ == "__main__":
