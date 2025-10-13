@@ -194,6 +194,7 @@ def extract(filename, outdir):
 
     os.chdir(cwd)
 
+
 def pack(files: list, workdir: os.PathLike, mtime: float, args: dict):
     archive_args = get_archive_parameters(args)
     outdir = args.outdir
@@ -219,9 +220,7 @@ def pack(files: list, workdir: os.PathLike, mtime: float, args: dict):
     ) as new_archive:
         try:
             for file in files:
-                new_archive.add_files(
-                    file, mtime=mtime, ctime=mtime, atime=mtime
-                )
+                new_archive.add_files(file, mtime=mtime, ctime=mtime, atime=mtime)
         except (
             TypeError
         ):  # If using old libarchive fallback to old non reproducible behavior
@@ -229,10 +228,11 @@ def pack(files: list, workdir: os.PathLike, mtime: float, args: dict):
                 "python libarchive is too old, unable to produce reproducible output"
             )
             for file in files:
-                new_archive.add_files(files)
+                new_archive.add_files(file)
     os.chdir(cwd)
 
-def cmd_go_mod(subcmd, moddir, goenv = None):
+
+def cmd_go_mod(subcmd, moddir, goenv=None):
     """Execute go mod subcommand using subprocess.run().
     Capture both stderr and stdout as text.
     Log as info or error in this function body.
@@ -419,12 +419,7 @@ def main():
             if modified:
                 files.extend(["go.mod", "go.sum"])
 
-            pack(
-                files = files,
-                workdir = go_mod_dir,
-                mtime = go_mod_mtime,
-                args = args
-            )
+            pack(files=files, workdir=go_mod_dir, mtime=go_mod_mtime, args=args)
 
         elif args.strategy == "gomodcache":
             # Tars the GOMODCACHE dir only. Does not run 'go mod vendor'
@@ -434,7 +429,7 @@ def main():
 
             gomodcache_dir = DEFAULT_MODCACHE_STEM
             gomodcache_path = os.path.join(tempdir, gomodcache_dir)
-            goenv = { "GOMODCACHE": gomodcache_path }
+            goenv = {"GOMODCACHE": gomodcache_path}
 
             # return value cp is type subprocess.CompletedProcess
             cp = cmd_go_mod(["download"], go_mod_dir, goenv)
@@ -456,12 +451,7 @@ def main():
                 exit(1)
 
             cache_dir = os.path.join(gomodcache_dir, "cache")
-            pack(
-                files = [cache_dir],
-                workdir = tempdir,
-                mtime = go_mod_mtime,
-                args = args
-            )
+            pack(files=[cache_dir], workdir=tempdir, mtime=go_mod_mtime, args=args)
 
             if modified:
                 log.info("Copy modified go.mod & go.sum to source dir")
@@ -472,8 +462,8 @@ def main():
             log.error(f"Unknown strategy `{args.strategy}`")
             exit(1)
 
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     log = logging.getLogger(app_name)
     main()
-
