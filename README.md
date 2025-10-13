@@ -29,7 +29,7 @@ The authoritative source is https://github.com/openSUSE/obs-service-go_modules.
 Using
 [`go.mod` and `go.sum`](https://github.com/golang/go/wiki/Modules)
 present in a Go application,
-`obs-service-go_modules` will call Go tools in sequence:
+`obs-service-go_modules` using the default strategy `vendor` will call Go tools in sequence:
 
 ```
 go mod download
@@ -39,6 +39,10 @@ go mod vendor
 
 `obs-service-go_modules` will create a `vendor.tar.gz` archive or other supported compression type
 containing the `vendor/` directory populated by `go mod vendor`.
+
+In some cases it can useful to use the `gomodcache` strategy which omits the `go mod vendor` step and creates
+a `gomodcache.tar.gz` archive containing the `$GOMODCACHE/cache` directory populated by `go mod download`.
+
 The archive is generated in the rpm package directory, and can be committed to
 [OBS](https://build.opensuse.org) to facilitate offline Go application package builds
 for [openSUSE](https://www.opensuse.org),
@@ -155,6 +159,13 @@ To ensure the top-level `vendor/` directory is used by go build, either:
 - pass the argument `go build -mod=vendor` to each invocation
 
 - set environment variable `GOFLAGS=-mod=vendor` to apply the setting to all invocations
+
+### Using the `gomodcache` strategy
+
+During `%setup` use the `-b…` option to uncompress the gomodcache archive before entering the working directory.
+
+Set the environment variable `GOMODCACHE=%{_builddir}/gomodcache` and either run `go mod vendor` in the `%setup` or `%build`
+section or just don't use the `-mod=vendor` option mentioned above.
 
 More information about additional controls is available at:
 [Go Module Knobs](https://github.com/thepudds/go-module-knobs/blob/master/README.md),
