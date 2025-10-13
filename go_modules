@@ -426,7 +426,7 @@ def main():
                 args = args
             )
 
-        elif args.strategy == "download":
+        elif args.strategy == "gomodcache":
             # Tars the GOMODCACHE dir only. Does not run 'go mod vendor'
             # Use it by untaring to the COMODCACHE dir and run 'go mod vendor' during build (in the spec).
 
